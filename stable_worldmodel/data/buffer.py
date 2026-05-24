@@ -197,6 +197,17 @@ class ReplayBuffer(Dataset):
     def __len__(self) -> int:
         return self.num_valid_ends(self.history_len)
 
+    def __repr__(self) -> str:
+        cols = ', '.join(self.column_names) or '-'
+        return (
+            f'ReplayBuffer('
+            f'episodes={self.num_episodes}, '
+            f'steps={self.num_steps_stored}/{self.max_steps}, '
+            f'history_len={self.history_len}, '
+            f'frameskip={self.frameskip}, '
+            f'columns=[{cols}])'
+        )
+
     def __getitem__(self, idx: int) -> dict:
         n = len(self)
         if n == 0:
