@@ -20,6 +20,7 @@ dependencies = [
   "loguru",
   "tabulate",
   "gymnasium",
+  "hydra-core",
   "einops",
   "lancedb>=0.30.0",
   "pylance>=4.0.0",
@@ -52,6 +53,7 @@ env = [
     "gymnasium-robotics",
     "opencv-python",
     "stable_baselines3>=2.0.0",
+    "tensorboard",
     "craftax>=1.5.0",
     "ale-py",
 ]

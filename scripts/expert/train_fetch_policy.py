@@ -1,6 +1,7 @@
 import os
 import argparse
 import gymnasium as gym
+import stable_worldmodel  # registers swm/* envs with Gymnasium
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList
 from stable_baselines3.common.monitor import Monitor

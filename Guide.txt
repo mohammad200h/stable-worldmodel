@@ -1,0 +1,9 @@
+######## Train expert RL policy ###########
+/home/mamad/PhD/stable-worldmodel/scripts/expert
+python3 train_fetch_policy_her.py
+######## Collecting expert trajectories #########
+/home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
+python3 collect_expert_trajectory_fetch.py
+######### Training leworld model ###########
+/home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
+./train_leworld.sh
