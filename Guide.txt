@@ -1,3 +1,8 @@
+######## Create python env ###########
+uv venv --python=3.10 && source .venv/bin/activate
+uv sync --extra all --group dev
+############ Resume python env ##########
+source .venv/bin/activate
 ######## Train expert RL policy ###########
 /home/mamad/PhD/stable-worldmodel/scripts/expert
 python3 train_fetch_policy_her.py

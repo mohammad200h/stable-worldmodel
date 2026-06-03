@@ -88,7 +88,16 @@ def load_pretrained(name: str, cache_dir: str = None, extra_args=None):
                 d = d.setdefault(part, {})
             d[parts[-1]] = value
 
-    model = instantiate(config)
+    # Many Hydra configs store the actual model under `model: {_target_: ...}`.
+    # Support both layouts: `_target_` at root, or nested under `model`.
+    model_cfg = config.get('model', config) if isinstance(config, dict) else config
+    model = instantiate(model_cfg)
+    if not hasattr(model, 'load_state_dict'):
+        raise TypeError(
+            'Hydra instantiation did not return a torch.nn.Module. '
+            f'Got {type(model)!r}. Make sure the config has a `_target_` '
+            'either at the top-level or under `model`.'
+        )
     model.load_state_dict(state_dict)
     return model
 
@@ -174,11 +183,25 @@ def _download(url: str, dest: Path) -> None:
 
 
 def _load_config(folder: Path) -> dict:
-    config_path = folder / 'config.json'
-    if not config_path.exists():
-        raise FileNotFoundError(f'config.json not found in {folder}')
-    with open(config_path) as f:
-        return json.load(f)
+    config_json = folder / 'config.json'
+    if config_json.exists():
+        with open(config_json) as f:
+            return json.load(f)
+
+    # Backward/alt format: Hydra YAML config next to weights.
+    config_yaml = folder / 'config.yaml'
+    if config_yaml.exists():
+        try:
+            import yaml  # type: ignore
+        except Exception as e:
+            raise ModuleNotFoundError(
+                'Found config.yaml but PyYAML is not installed. '
+                'Install it with `pip install pyyaml` or save config.json instead.'
+            ) from e
+        with open(config_yaml) as f:
+            return yaml.safe_load(f)
+
+    raise FileNotFoundError(f'No config.json or config.yaml found in {folder}')
 
 
 __all__ = ['load_pretrained', 'save_pretrained']
