@@ -1,9 +1,9 @@
 defaults:
   - _self_
   - launcher: local
-  - data: fetch
+  - data: fetch_state
 
-output_model_name: lewm
+output_model_name: lewm_state
 subdir: ${hydra:job.id}
 
 num_workers: 6
@@ -45,13 +45,11 @@ wm:
 
 model:
   _target_: stable_worldmodel.wm.lewm.LeWM
+  pixel_encoding: False
   encoder:
-    _target_: stable_pretraining.backbone.utils.vit_hf
-    size: ${encoder_scale}
-    patch_size: ${patch_size}
-    image_size: ${img_size}
-    pretrained: false
-    use_mask_token: false
+    _target_: stable_worldmodel.wm.lewm.module.Embedder
+    input_dim: ???
+    emb_dim: ${embed_dim}
   predictor:
     _target_: stable_worldmodel.wm.lewm.module.Predictor
     num_frames: ${wm.history_size}
