@@ -28,6 +28,7 @@ def test_fetch_environment_initialization(env_id):
     assert 'proprio' in info, 'proprio state must be exposed'
     assert 'state' in info, 'flattened state must be exposed'
     assert 'goal_state' in info, 'goal state must be exposed'
+    assert 'goal' in info, 'goal image must be exposed for planning'
 
     env.close()
 

@@ -5,17 +5,42 @@ import torch
 os.environ.setdefault("MUJOCO_GL", "egl")  # or "glfw" if you have a display
 
 import numpy as np
+import stable_pretraining as spt
 import stable_worldmodel as swm
 
 import gymnasium as gym
 from stable_baselines3 import SAC
+from torchvision.transforms import v2 as transforms
+
+from stable_worldmodel.policy import WorldModelPolicy, PlanConfig
+from stable_worldmodel.solver import CEMSolver
 
 
+def img_transform(img_size: int = 224, dtype=torch.float32):
+    """Match LeWM training (ToImage + ImageNet norm + resize)."""
+    return transforms.Compose(
+        [
+            transforms.ToImage(),
+            transforms.ToDtype(dtype, scale=True),
+            transforms.Normalize(**spt.data.dataset_stats.ImageNet),
+            transforms.Resize(size=img_size),
+        ]
+    )
 
-def get_world_model():
+
+def get_world():
+    world = swm.World("swm/FetchReachDict-v3", num_envs=8, image_shape=(224, 224))
+    return world
+
+
+def get_world_model(device: str = "cuda"):
     world_model_ckpt_path = "/home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch/"
-    world_model = swm.wm.utils.load_pretrained(name="fetch_reach_lewm/weights_epoch_100.pt", cache_dir=world_model_ckpt_path)
-
+    world_model = swm.wm.utils.load_pretrained(
+        name="fetch_reach_lewm/weights_epoch_100.pt",
+        cache_dir=world_model_ckpt_path,
+    )
+    world_model = world_model.to(device).eval()
+    world_model.requires_grad_(False)
     return world_model
 
 def load_rl_policy():
@@ -34,7 +59,7 @@ def rollout_rl_policy(policy):
 
     while not done:
         obs_pixels = env.render()
-        print(f"obs_pixels::shape: {obs_pixels.shape}")
+        # print(f"obs_pixels::shape: {obs_pixels.shape}")
         action, _ = policy.predict(obs)
         next_obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
@@ -53,43 +78,41 @@ def rollout_rl_policy(policy):
 
     return trajectory
 
-# This is written by AI: rewrite this to be easier to understand
-# The action sequence should be paddes with action repeats to match the history size
-def rollout_leworld_model(world_model, trajectory):
-    w_trajectory = []
-    device = next(world_model.parameters()).device
-    dtype = next(world_model.encoder.parameters()).dtype
-    
-    with torch.inference_mode():
-        for transition in trajectory:
-            obs_pixels = transition["pixels"]  # (H,W,C) uint8 numpy
-            action = transition["action"]  # (action_dim,) numpy
 
-            pixels = torch.from_numpy(obs_pixels).permute(2, 0, 1)  # (C,H,W)
-            pixels = pixels.unsqueeze(0).unsqueeze(0)  # (B=1,T=1,C,H,W)
-            pixels = pixels.to(device=device, dtype=dtype)
+def plan(world_model, world, img_size: int = 224):
+    transform = {
+        'pixels': img_transform(img_size),
+        'goal': img_transform(img_size),
+    }
 
-            act = torch.as_tensor(action, dtype=torch.float32).reshape(1, 1, -1)
-            if act.size(-1) != world_model.action_encoder.input_dim:
-                target_dim = int(world_model.action_encoder.input_dim)
-                padded = torch.zeros((1, 1, target_dim), dtype=act.dtype)
-                n = min(target_dim, act.size(-1))
-                padded[..., :n] = act[..., :n]
-                act = padded
-            act = act.to(device=device)
+    # model predictive control
+    solver = CEMSolver(model=world_model, num_samples=300, device='cuda')
+    policy = WorldModelPolicy(
+        solver=solver,
+        config=PlanConfig(
+            horizon=10,
+            receding_horizon=5,
+            action_block=5,  # dataset frameskip; action_encoder input_dim=20
+        ),
+        transform=transform,
+    )
 
-            info = {"pixels": pixels, "action": act}
-            w_trajectory.append(world_model.encode(info))
-        
-    return w_trajectory
+    world.set_policy(policy)
+    results = world.evaluate(episodes=10, seed=0)
+
+    print(f"Success Rate: {results['success_rate']:.1f}%")
+
 
 def main():
+    world = get_world()
     world_model = get_world_model()
-    world_model.eval()
-    rl_agent = load_rl_policy()
-    trajectory = rollout_rl_policy(rl_agent)
-    w_trajectory = rollout_leworld_model(world_model, trajectory)
-    print(f"w_trajectory: {w_trajectory}")
+    # world_model.eval()
+    # rl_agent = load_rl_policy()
+    # trajectory = rollout_rl_policy(rl_agent)
+
+    plan(world_model, world)
+ 
+  
 
 
 if __name__ == "__main__":

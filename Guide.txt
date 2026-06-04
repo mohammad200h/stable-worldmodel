@@ -4,11 +4,14 @@ uv sync --extra all --group dev
 ############ Resume python env ##########
 source .venv/bin/activate
 ######## Train expert RL policy ###########
-/home/mamad/PhD/stable-worldmodel/scripts/expert
+cd /home/mamad/PhD/stable-worldmodel/scripts/expert
 python3 train_fetch_policy_her.py
 ######## Collecting expert trajectories #########
-/home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
+cd /home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
 python3 collect_expert_trajectory_fetch.py
 ######### Training leworld model ###########
-/home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
+cd /home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
 ./train_leworld.sh
+######## Planning ###########
+cd /home/mamad/PhD/stable-worldmodel/scripts/examples/leworld_fetch
+python3 demo_leworld_model.py

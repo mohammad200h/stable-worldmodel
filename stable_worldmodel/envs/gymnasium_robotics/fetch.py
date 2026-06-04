@@ -42,6 +42,8 @@ class FetchWrapper(gym.Wrapper):
         flatten=True,
         **kwargs,
     ):
+        if render_mode is None:
+            render_mode = 'rgb_array'
         env = gym.make(env_id, render_mode=render_mode, **kwargs)
         super().__init__(env)
 
@@ -189,6 +191,42 @@ class FetchWrapper(gym.Wrapper):
         if init_value is not None:
             self.variation_space.set_init_value(init_value)
 
+        self._goal = None
+
+    def _mujoco_env(self):
+        env = self.env.unwrapped
+        while hasattr(env, 'env'):
+            env = env.env
+        return env
+
+    def _render_goal(self, desired_goal: np.ndarray) -> np.ndarray:
+        """Render an RGB image with the gripper near ``desired_goal``."""
+        if mujoco is None:
+            return self.render()
+
+        mujoco_env = self._mujoco_env()
+        qpos_saved = mujoco_env.data.qpos.copy()
+        qvel_saved = mujoco_env.data.qvel.copy()
+        mocap_saved = mujoco_env.data.mocap_pos.copy()
+        ctrl_saved = mujoco_env.data.ctrl.copy()
+
+        desired_goal = np.asarray(desired_goal, dtype=np.float64)
+        mujoco_env.data.mocap_pos[0] = desired_goal
+        for _ in range(100):
+            achieved = mujoco_env._get_obs()['achieved_goal']
+            delta = desired_goal - achieved
+            action = np.clip(np.concatenate([delta, [0.0]]), -1.0, 1.0)
+            mujoco_env.step(action)
+
+        goal_img = self.render()
+
+        mujoco_env.data.qpos[:] = qpos_saved
+        mujoco_env.data.qvel[:] = qvel_saved
+        mujoco_env.data.mocap_pos[:] = mocap_saved
+        mujoco_env.data.ctrl[:] = ctrl_saved
+        mujoco.mj_forward(mujoco_env.model, mujoco_env.data)
+        return goal_img
+
     def _flatten_obs(self, obs):
         return np.concatenate(
             [obs['observation'], obs['desired_goal']], axis=0
@@ -247,6 +285,8 @@ class FetchWrapper(gym.Wrapper):
         info['proprio'] = obs['observation']
         info['state'] = flat_obs
         info['goal_state'] = obs['desired_goal']
+        self._goal = self._render_goal(obs['desired_goal'])
+        info['goal'] = self._goal
 
         return (flat_obs if self._flatten else obs), info
 
@@ -300,6 +340,7 @@ class FetchWrapper(gym.Wrapper):
         info['proprio'] = obs['observation']
         info['state'] = flat_obs
         info['goal_state'] = obs['desired_goal']
+        info['goal'] = self._goal
         return (
             (flat_obs if self._flatten else obs),
             reward,

@@ -263,6 +263,7 @@ class World:
         format: str = 'lance',
         writer: Any = None,
         progress: bool = True,
+        exclude_keys: frozenset[str] | set[str] | None = frozenset({'goal'}),
     ) -> None:
         """Roll out ``episodes`` and dump their trajectories.
 
@@ -290,10 +291,15 @@ class World:
             writer: A pre-built writer (e.g. ``ReplayBuffer``) to fill
                 directly. Mutually exclusive with ``path``.
             progress: Whether to show the ``Recording`` progress bar.
+            exclude_keys: Info keys to omit from stored episodes. Defaults to
+                ``{'goal'}`` so planning-only goal images do not change Lance
+                schemas or duplicate a constant image every step.
         """
         from tqdm import tqdm
 
         from stable_worldmodel.data.format import get_format
+
+        skip_keys = set() if exclude_keys is None else set(exclude_keys)
 
         if (path is None) == (writer is None):
             raise ValueError(
@@ -309,7 +315,7 @@ class World:
 
         def on_step(world):
             for col, data in world.infos.items():
-                if col.startswith('_'):
+                if col.startswith('_') or col in skip_keys:
                     continue
                 if not isinstance(data, (np.ndarray, torch.Tensor)):
                     continue

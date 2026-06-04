@@ -77,6 +77,7 @@ The `info` dict returned by `step()` and `reset()` is strictly formatted to stan
 | `state` | `(28,)` | `(13,)` | Full flattened state array natively concatenating `observation` + `desired_goal` |
 | `proprio` | `(25,)` | `(10,)` | Isolated agent internal state (gripper poses, joint velocities, object physics) |
 | `goal_state` | `(3,)` | `(3,)` | The 3D Cartesian XYZ target coordinates for the objective |
+| `goal` | `(H, W, 3)` | `(H, W, 3)` | Rendered RGB image with the gripper at the goal (for visual planning) |
 
 ### Variation Space
 
