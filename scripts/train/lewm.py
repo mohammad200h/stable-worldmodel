@@ -51,6 +51,7 @@ class SaveCkptCallback(Callback):
             model,
             run_name=self.run_name,
             config=self.cfg,
+            config_key='model',
             filename=f'weights_epoch_{epoch}.pt',
         )
 

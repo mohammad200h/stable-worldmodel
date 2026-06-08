@@ -19,12 +19,12 @@ def run(cfg):
     traj_per_shard = cfg.num_traj // cfg.num_shards
 
     rng = np.random.default_rng(cfg.seed)
-
+   
     for i in range(cfg.num_shards):
+        path = Path(cfg.cache_dir or swm.data.utils.get_cache_dir()) / 'datasets'/ f'pusht_weak_100/shard_{i}.lance'
+        print(f"Collecting data to {path}")
         world.collect(
-            Path(cfg.cache_dir or swm.data.utils.get_cache_dir())
-            / 'datasets'
-            / f'pusht_weak_100/shard_{i}.lance',
+            path,
             episodes=traj_per_shard,
             seed=rng.integers(0, 1_000_000).item(),
             options=options,

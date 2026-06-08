@@ -261,6 +261,20 @@ def test_load_pretrained_instantiate_called_with_config(tmp_path):
     assert mock_inst.call_args[0][0]['_target_'] == TINY_CONFIG['_target_']
 
 
+def test_load_pretrained_nested_model_config(tmp_path):
+  """Checkpoints saved with the full training cfg load via config['model']."""
+    model = TinyModel()
+    run_dir = _ckpt_root(tmp_path) / 'run_nested'
+    run_dir.mkdir(parents=True)
+    torch.save(model.state_dict(), run_dir / 'weights.pt')
+    (run_dir / 'config.json').write_text(
+        json.dumps({'seed': 0, 'trainer': {'max_epochs': 1}, 'model': TINY_CONFIG})
+    )
+    with patch('hydra.utils.instantiate', return_value=TinyModel()):
+        loaded = load_pretrained('run_nested/weights.pt', cache_dir=tmp_path)
+    assert isinstance(loaded, TinyModel)
+
+
 def test_load_pretrained_missing_checkpoint_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_pretrained('ghost/weights.pt', cache_dir=tmp_path)

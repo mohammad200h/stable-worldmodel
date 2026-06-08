@@ -88,9 +88,27 @@ def load_pretrained(name: str, cache_dir: str = None, extra_args=None):
                 d = d.setdefault(part, {})
             d[parts[-1]] = value
 
-    model = instantiate(config)
+    model = instantiate(_model_instantiate_config(config))
     model.load_state_dict(state_dict)
     return model
+
+
+def _model_instantiate_config(config: dict) -> dict:
+    """Return the Hydra config used to instantiate the model.
+
+    Training scripts may save either a model-only config (with top-level
+    ``_target_``) or a full run config that nests the model under ``model``.
+    """
+    if '_target_' in config:
+        return config
+    model_cfg = config.get('model')
+    if isinstance(model_cfg, dict) and '_target_' in model_cfg:
+        return model_cfg
+    raise ValueError(
+        'config.json must contain a top-level _target_ or a model sub-config '
+        'with _target_. Re-save the checkpoint with save_pretrained(..., '
+        'config_key="model").'
+    )
 
 
 def _resolve(name: str, cache_dir: Path) -> tuple[Path, dict]:
