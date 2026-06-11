@@ -1,0 +1,23 @@
+{
+  "env": {
+    "id": "swm/PushT-v1",
+    "resolution": 64,
+    "max_episode_steps": 200,
+    "grayscale": true,
+    "frame_stack": 4,
+    "normalize_pixels": true,
+    "n_envs": 8,
+    "seed": 42
+  },
+  "sac": {
+    "policy": "CnnPolicy",
+    "learning_starts": 10000,
+    "buffer_size": 200000,
+    "batch_size": 256,
+    "verbose": 1
+  },
+  "training": {
+    "total_timesteps": 500000,
+    "eval_freq_steps": 5000
+  }
+}
