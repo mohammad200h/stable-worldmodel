@@ -225,8 +225,7 @@ def train_expert(
                 'frame_stack': env_cfg['frame_stack'],
                 'normalize_pixels': env_cfg['normalize_pixels'],
                 'learning_starts': sac_cfg['learning_starts'],
-                'buffer_size': buffer_size,
-                'buffer_size_requested': sac_cfg['buffer_size'],
+                'buffer_size': sac_cfg['buffer_size'],
                 'batch_size': sac_cfg['batch_size'],
                 **{
                     key: sac_cfg[key]
