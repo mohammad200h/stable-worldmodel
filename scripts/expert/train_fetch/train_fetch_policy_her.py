@@ -3,7 +3,9 @@ import argparse
 import gymnasium as gym
 import stable_worldmodel  # registers swm/* envs with Gymnasium
 from stable_baselines3 import SAC
-from stable_baselines3.common.callbacks import EvalCallback, CallbackList
+from stable_baselines3.common.callbacks import CallbackList
+
+from callbacks import FetchEvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.her import HerReplayBuffer
 
@@ -84,7 +86,7 @@ def train_expert(
     print('===================================================')
 
     env = Monitor(gym.make(env_id))
-    eval_env = Monitor(gym.make(env_id))
+    eval_env = Monitor(gym.make(env_id, render_mode='rgb_array'))
     _check_her_obs_space(env)
     _check_her_obs_space(eval_env)
 
@@ -107,8 +109,10 @@ def train_expert(
     save_path = f'./policies/{env_id.replace("/", "_")}_expert'
     os.makedirs(save_path, exist_ok=True)
 
-    eval_callback = EvalCallback(
+    eval_callback = FetchEvalCallback(
         eval_env,
+        video_folder=f'{save_path}/videos',
+        log_video_to_wandb=track,
         best_model_save_path=save_path,
         log_path=save_path,
         eval_freq=5000,

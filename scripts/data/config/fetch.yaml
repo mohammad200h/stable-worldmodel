@@ -1,0 +1,26 @@
+defaults:
+  - _self_
+  - launcher/local
+
+hydra:
+  output_subdir: null
+  mode: MULTIRUN
+  run:
+    dir: .
+
+env_name: "swm/FetchReachDict-v3"
+cache_dir: null
+
+world:
+  num_envs: 16
+  max_episode_steps: 50
+  image_shape: [224, 224]
+
+seed: 3072
+num_traj: 10000
+
+options: null
+
+device: cuda
+render_mode: rgb_array
+ckpt_path: "/home/mamad/PhD/stable-worldmodel/scripts/expert/train_fetch/policies/swm_FetchReachDict-v3_expert/best_model.zip"
