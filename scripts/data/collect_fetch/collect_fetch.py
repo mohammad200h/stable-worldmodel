@@ -37,7 +37,7 @@ def run(cfg):
     world.collect(
         Path(cfg.cache_dir or swm.data.utils.get_cache_dir())
         / 'datasets'
-        / 'fetch_reach_expert.lance',
+        / 'fetch_reach_expert_rl_agent.lance',
         episodes=cfg.num_traj,
         seed=rng.integers(0, 1_000_000).item(),
         options=options,
