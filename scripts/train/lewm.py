@@ -1,4 +1,6 @@
 import os
+import argparse
+import sys
 from pathlib import Path
 
 import hydra
@@ -15,6 +17,40 @@ from stable_worldmodel.data import column_normalizer as get_column_normalizer
 from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
+
+_WANDB_CLI = argparse.Namespace(track=False, project=None)
+
+
+def setup_wandb_logger(cfg):
+    """Initialize W&B the same way as train_fetch_policy_her.py (--track)."""
+    track = (
+        _WANDB_CLI.track
+        or cfg.get('track', False)
+        or cfg.wandb.get('enabled', False)
+    )
+    if not track:
+        return None
+
+    try:
+        import wandb  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            'wandb is required for tracking. Install it with: pip install wandb'
+        ) from exc
+
+    project = (
+        _WANDB_CLI.project
+        or cfg.wandb.get('project', 'stable-worldmodel')
+    )
+    name = cfg.wandb.get('name', cfg.output_model_name)
+    logger = WandbLogger(
+        project=project,
+        name=name,
+        save_code=True,
+        log_model=False,
+    )
+    logger.log_hyperparams(OmegaConf.to_container(cfg))
+    return logger
 
 
 def get_img_preprocessor(source: str, target: str, img_size: int = 224):
@@ -64,6 +100,8 @@ def lejepa_forward(self, batch, stage, cfg):
 
     # Replace NaN values with 0 (occurs at sequence boundaries)
     batch['action'] = torch.nan_to_num(batch['action'], 0.0)
+    if 'state' in batch:
+        batch['state'] = torch.nan_to_num(batch['state'], 0.0)
 
     output = self.model.encode(batch)
 
@@ -103,19 +141,30 @@ def run(cfg):
     dataset = swm.data.load_dataset(
         dataset_name, transform=None, cache_dir=cache_dir, **dataset_cfg
     )
-    transforms = [
-        get_img_preprocessor(
-            source='pixels', target='pixels', img_size=cfg.img_size
+    pixel_encoding = cfg.model.get('pixel_encoding', True)
+    transforms = []
+    if pixel_encoding:
+        transforms.append(
+            get_img_preprocessor(
+                source='pixels', target='pixels', img_size=cfg.img_size
+            )
         )
-    ]
 
     with open_dict(cfg):
-        for col in cfg.data.dataset.keys_to_load:
+        norm_cols = (
+            ('state', 'action')
+            if not pixel_encoding
+            else cfg.data.dataset.keys_to_load
+        )
+        for col in norm_cols:
+            if col not in cfg.data.dataset.keys_to_load:
+                continue
             if col.startswith('pixels'):
                 continue
+            transforms.append(get_column_normalizer(dataset, col, col))
 
-            normalizer = get_column_normalizer(dataset, col, col)
-            transforms.append(normalizer)
+        if not pixel_encoding:
+            cfg.model.encoder.input_dim = dataset.get_dim('state')
 
         cfg.model.action_encoder.input_dim = (
             cfg.data.dataset.frameskip * dataset.get_dim('action')
@@ -178,10 +227,7 @@ def run(cfg):
         swm.data.utils.get_cache_dir(sub_folder='checkpoints'), run_id
     )
 
-    logger = None
-    if cfg.wandb.enabled:
-        logger = WandbLogger(**cfg.wandb.config)
-        logger.log_hyperparams(OmegaConf.to_container(cfg))
+    logger = setup_wandb_logger(cfg)
 
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(run_dir / 'config.yaml', 'w') as f:
@@ -213,5 +259,26 @@ def run(cfg):
     return
 
 
+def parse_wandb_args(argv=None):
+    """Parse --track/--project before Hydra, like train_fetch_policy_her.py."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        '--track',
+        action='store_true',
+        help='Log training metrics natively to Weights & Biases',
+    )
+    parser.add_argument(
+        '--project',
+        type=str,
+        default=None,
+        help='WandB Cloud project name',
+    )
+    args, hydra_args = parser.parse_known_args(argv)
+    _WANDB_CLI.track = args.track
+    _WANDB_CLI.project = args.project
+    return hydra_args
+
+
 if __name__ == '__main__':
+    sys.argv = [sys.argv[0], *parse_wandb_args()]
     run()

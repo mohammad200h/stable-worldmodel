@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import gymnasium as gym
+from omegaconf import OmegaConf
 import stable_worldmodel  # registers swm/* envs with Gymnasium
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CallbackList
@@ -27,8 +28,30 @@ from env import register_fetch_wm_env
 
 register_fetch_wm_env()
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
 _WM_ENV_ID = 'swm/FetchReachWM-v0'
 _HER_OBS_KEYS = ('observation', 'achieved_goal', 'desired_goal')
+_WM_CONFIGS = {
+    'pixels': _SCRIPT_DIR / 'rl_pixals_worldmodel.yaml',
+    'state': _SCRIPT_DIR / 'rl_state_worldmodel.yaml',
+}
+
+
+def _load_wm_yaml(input_state_type: str) -> dict:
+    config_path = _WM_CONFIGS[input_state_type]
+    return OmegaConf.to_container(OmegaConf.load(config_path))
+
+
+def _resolve_wm_settings(
+    input_state_type: str,
+    world_model_path: str | None,
+    checkpoint: str | None,
+) -> tuple[str, str, bool]:
+    wm_cfg = _load_wm_yaml(input_state_type)
+    path = world_model_path or wm_cfg['world_model_path']
+    ckpt = checkpoint or wm_cfg['checkpoint']
+    emb_pixels = wm_cfg['embedding_is_made_of_pixels']
+    return path, ckpt, emb_pixels
 
 
 def _dict_env_id(env_id: str) -> str:
@@ -53,16 +76,23 @@ def _dict_env_id(env_id: str) -> str:
     )
 
 
-def _make_env(env_id: str, world_model_path: str | None, checkpoint: str | None):
+def _make_env(
+    env_id: str,
+    world_model_path: str | None,
+    checkpoint: str | None,
+    embedding_is_made_of_pixels: bool = True,
+):
     if env_id == _WM_ENV_ID:
         if world_model_path is None or checkpoint is None:
             raise ValueError(
-                f"'{env_id}' requires --wm-path and --checkpoint."
+                f"'{env_id}' requires world model path and checkpoint "
+                f'(from --input-state-type yaml or --wm-path / --checkpoint).'
             )
         return gym.make(
             env_id,
             world_model_path=world_model_path,
             checkpoint=checkpoint,
+            embedding_is_made_of_pixels=embedding_is_made_of_pixels,
         )
     return gym.make(env_id)
 
@@ -93,8 +123,10 @@ def train_expert(
     n_sampled_goal: int = 4,
     goal_selection_strategy: str = 'future',
     learning_starts: int = 1000,
+    input_state_type: str = 'pixels',
     world_model_path: str | None = None,
     checkpoint: str | None = None,
+    embedding_is_made_of_pixels: bool = True,
 ):
     """
     Train SAC with Hindsight Experience Replay on sparse Fetch tasks.
@@ -114,10 +146,25 @@ def train_expert(
         f' HER: strategy={goal_selection_strategy}, '
         f'n_sampled_goal={n_sampled_goal}'
     )
+    print(f' WM input: {input_state_type} (pixels={embedding_is_made_of_pixels})')
     print('===================================================')
 
-    env = Monitor(_make_env(env_id, world_model_path, checkpoint))
-    eval_env = Monitor(_make_env(env_id, world_model_path, checkpoint))
+    env = Monitor(
+        _make_env(
+            env_id,
+            world_model_path,
+            checkpoint,
+            embedding_is_made_of_pixels,
+        )
+    )
+    eval_env = Monitor(
+        _make_env(
+            env_id,
+            world_model_path,
+            checkpoint,
+            embedding_is_made_of_pixels,
+        )
+    )
     _check_her_obs_space(env)
     _check_her_obs_space(eval_env)
 
@@ -170,6 +217,10 @@ def train_expert(
                 'n_sampled_goal': n_sampled_goal,
                 'goal_selection_strategy': goal_selection_strategy,
                 'learning_starts': learning_starts,
+                'input_state_type': input_state_type,
+                'embedding_is_made_of_pixels': embedding_is_made_of_pixels,
+                'world_model_path': world_model_path,
+                'checkpoint': checkpoint,
             },
             sync_tensorboard=True,
             monitor_gym=True,
@@ -213,16 +264,32 @@ if __name__ == '__main__':
         ),
     )
     parser.add_argument(
+        '--input-state-type',
+        type=str,
+        default='pixels',
+        choices=['pixels', 'state'],
+        help=(
+            'World model input type: pixels loads rl_pixals_worldmodel.yaml, '
+            'state loads rl_state_worldmodel.yaml.'
+        ),
+    )
+    parser.add_argument(
         '--wm-path',
         type=str,
         default=None,
-        help=f'World model checkpoint directory (required for {_WM_ENV_ID})',
+        help=(
+            f'Override world model checkpoint directory for {_WM_ENV_ID} '
+            f'(default from --input-state-type yaml)'
+        ),
     )
     parser.add_argument(
         '--checkpoint',
         type=str,
         default=None,
-        help=f'Checkpoint filename inside --wm-path (required for {_WM_ENV_ID})',
+        help=(
+            f'Override checkpoint filename inside --wm-path for {_WM_ENV_ID} '
+            f'(default from --input-state-type yaml)'
+        ),
     )
     parser.add_argument(
         '--timesteps',
@@ -266,6 +333,12 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    wm_path, ckpt, emb_pixels = _resolve_wm_settings(
+        args.input_state_type,
+        args.wm_path,
+        args.checkpoint,
+    )
+
     train_expert(
         args.env,
         args.timesteps,
@@ -275,6 +348,8 @@ if __name__ == '__main__':
         n_sampled_goal=args.n_sampled_goal,
         goal_selection_strategy=args.goal_strategy,
         learning_starts=args.learning_starts,
-        world_model_path=args.wm_path,
-        checkpoint=args.checkpoint,
+        input_state_type=args.input_state_type,
+        world_model_path=wm_path,
+        checkpoint=ckpt,
+        embedding_is_made_of_pixels=emb_pixels,
     )

@@ -47,9 +47,10 @@ model:
   _target_: stable_worldmodel.wm.lewm.LeWM
   pixel_encoding: False
   encoder:
-    _target_: stable_worldmodel.wm.lewm.module.Embedder
+    _target_: stable_worldmodel.wm.lewm.module.StateEncoder
     input_dim: ???
     emb_dim: ${embed_dim}
+    hidden_dim: 2048
   predictor:
     _target_: stable_worldmodel.wm.lewm.module.Predictor
     num_frames: ${wm.history_size}

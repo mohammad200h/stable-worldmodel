@@ -1,0 +1,27 @@
+# Memory-safe LeWM training for a single machine with 2× RTX 4090 (24 GB each).
+#
+# The default lewm.yaml (batch_size=128, num_workers=6, prefetch_factor=3,
+# persistent_workers=True, devices=auto) can OOM system RAM: DDP spawns
+# 2×num_workers DataLoader processes, each prefetching large image batches.
+#
+# Usage:
+#   python3 lewm_state.py --config-name lewm_state_local data=pusht
+
+defaults:
+  - lewm_state
+  - _self_
+
+num_workers: 4
+
+trainer:
+  devices: 2
+
+loader:
+  batch_size: 192
+  num_workers: ${num_workers}
+  prefetch_factor: 2
+  persistent_workers: True
+
+data:
+  dataset:
+    keys_to_cache: []

@@ -62,14 +62,15 @@ class LeWM(nn.Module):
         return info
 
     def _encode_state(self, info):
-        """Encode state into embeddings. (vectors of numbers)
-        info: dict with state keys
+        """Encode numeric state into embeddings via an MLP encoder.
+
+        Expects info['state'] of shape (B, T, state_dim) with no pixels.
         """
         state = info['state'].float()
-        b = state.size(0)
+        b, t = state.shape[:2]
         emb = self.encoder(state)
         emb = self.projector(rearrange(emb, 'b t d -> (b t) d'))
-        info['emb'] = rearrange(emb, '(b t) d -> b t d', b=b)
+        info['emb'] = rearrange(emb, '(b t) d -> b t d', b=b, t=t)
 
         if 'action' in info:
             info['act_emb'] = self.action_encoder(info['action'])

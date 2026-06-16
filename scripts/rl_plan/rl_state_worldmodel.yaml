@@ -1,0 +1,3 @@
+world_model_path: '/home/mamad/.stable_worldmodel/checkpoints/lewm_state'
+checkpoint: 'weights_epoch_100.pt'
+embedding_is_made_of_pixels: false

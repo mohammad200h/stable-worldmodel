@@ -42,19 +42,26 @@ python3 lewm.py data=fetch_rl # if on cluster and have beefy gpu
 ```
 
 # Train world model on workstation
+## Pixels
 ```bash
 cd /home/mamad/PhD/stable-worldmodel/scripts/train
-python3 lewm.py --config-name lewm_local data=fetch_rl 
+python3 lewm.py --config-name lewm_local data=fetch_rl --track
 ```
+## State Vector (No pixels)
+```bash
+cd /home/mamad/PhD/stable-worldmodel/scripts/train
+python3 lewm.py --config-name lewm_state_local data=fetch_rl --track
 
+
+```
 # Evaluate world model
 ```bash
 cd /home/mamad/PhD/stable-worldmodel/scripts/rl_plan
-python train_fetch_policy_her.py \
-  --env swm/FetchReachWM-v0 \
-  --wm-path /home/mamad/.stable_worldmodel/checkpoints/lewm \
-  --checkpoint weights_epoch_100.pt \
-  --timesteps 100000
+# Pixel-based world model (default) — loads rl_pixals_worldmodel.yaml
+python train_fetch_policy_her.py --input-state-type pixels
+
+# State-based world model — loads rl_state_worldmodel.yaml
+python train_fetch_policy_her.py --input-state-type state --track
 ```
 
 # To wathch GPU performance:

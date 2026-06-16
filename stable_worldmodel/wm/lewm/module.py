@@ -234,9 +234,43 @@ class MLP(nn.Module):
 
     def forward(self, x):
         """
-        x: (B*T, D)
+        x: (*, D) — any leading batch/time dims, last dim is input_dim
         """
+        lead = x.shape[:-1]
+        if len(lead) > 1:
+            x = x.reshape(-1, x.shape[-1])
+            return self.net(x).view(*lead, -1)
         return self.net(x)
+
+
+class StateEncoder(nn.Module):
+    """MLP encoder for numeric state vectors (no pixels)."""
+
+    def __init__(
+        self,
+        input_dim,
+        emb_dim,
+        hidden_dim=None,
+        norm_fn=nn.LayerNorm,
+        act_fn=nn.GELU,
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.emb_dim = emb_dim
+        self.encoder = MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim or 4 * emb_dim,
+            output_dim=emb_dim,
+            norm_fn=norm_fn,
+            act_fn=act_fn,
+        )
+
+    def forward(self, x):
+        """
+        x: (B, T, D) numeric state
+        returns: (B, T, emb_dim)
+        """
+        return self.encoder(x.float())
 
 
 class Predictor(nn.Module):

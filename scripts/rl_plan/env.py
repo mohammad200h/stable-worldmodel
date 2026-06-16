@@ -20,21 +20,33 @@ class FetchWorldModelEnv(gym.Env):
         checkpoint,
         device=None,
         img_size=224,
+        embedding_is_made_of_pixels=True,
         env_id='swm/FetchReachDict-v3',
         **kwargs,
     ):
         self.device = device or (
             'cuda' if torch.cuda.is_available() else 'cpu'
         )
+
+        self.embedding_is_made_of_pixels = embedding_is_made_of_pixels
+
         self.wm_config = self._load_wm_config(world_model_path)
         self.worldmodel = self._load_worldmodel(world_model_path, checkpoint)
-        self.pixel_transform = self._make_pixel_transform(img_size)
+
+        
 
         self._env_id = env_id
         self.original_env = self._load_original_env(self._env_id)
         self.action_space = self.original_env.action_space
 
-        emb_dim = self._infer_emb_dim(img_size)
+        emb_dim = None
+        if self.embedding_is_made_of_pixels:
+            self.pixel_transform = self._make_pixel_transform(img_size)
+            emb_dim = self._infer_emb_dim_pixels(img_size)
+        else:
+            self.state_dim = self.worldmodel.encoder.input_dim
+            emb_dim = self._infer_emb_dim_state()
+        
         orig_obs_space = self.original_env.observation_space
         self.observation_space = gym.spaces.Dict(
             {
@@ -55,17 +67,7 @@ class FetchWorldModelEnv(gym.Env):
         self._action_buf = deque(maxlen=self.frameskip)
         self.obs_embedding = None
 
-        # original env state
-        self.original_env_state = {
-            "obs":None,
-            "action":None,
-            "next_obs":None,
-            "reward":None,
-            "done":False,
-            "truncated":False,
-            "info":{}
-        }
-
+       
     def _load_wm_config(self, path):
         config_path = Path(path) / 'config.json'
         if not config_path.exists():
@@ -83,7 +85,16 @@ class FetchWorldModelEnv(gym.Env):
         model.requires_grad_(False)
         return model
 
-    def _infer_emb_dim(self, img_size):
+    
+    def _infer_emb_dim_state(self):
+        with torch.no_grad():
+            state = torch.zeros(
+                1, 1, self.state_dim, device=self.device, dtype=torch.float32
+            )
+            encoded = self.worldmodel.encode({'state': state})
+        return int(encoded['emb'].shape[-1])
+    
+    def _infer_emb_dim_pixels(self, img_size):
         with torch.no_grad():
             dtype = next(self.worldmodel.parameters()).dtype
             pixels = torch.zeros(
@@ -155,6 +166,25 @@ class FetchWorldModelEnv(gym.Env):
         pixels = self.pixel_transform(pixels)
         return pixels.unsqueeze(0).unsqueeze(0).to(self.device)
 
+    def _flatten_state(self, raw_obs):
+        if isinstance(raw_obs, dict):
+            return np.concatenate(
+                [raw_obs['observation'], raw_obs['desired_goal']], axis=0
+            ).astype(np.float32)
+        return np.asarray(raw_obs, dtype=np.float32).reshape(-1)
+
+    def _prepare_state(self, state):
+        state = self._flatten_state(state)
+        if state.shape[0] != self.state_dim:
+            raise ValueError(
+                f'Expected state dim {self.state_dim}, got {state.shape[0]}'
+            )
+        return (
+            torch.as_tensor(state, device=self.device, dtype=torch.float32)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
+
     def _prepare_wm_action(self, action):
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         env_action_dim = self.action_space.shape[0]
@@ -179,8 +209,14 @@ class FetchWorldModelEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         self._action_buf.clear()
-        raw_obs, pixels = self._reset_env_obs(seed=seed, options=options)
-        encoded = self.worldmodel.encode({'pixels': pixels})
+        raw_obs, _ = self.original_env.reset(seed=seed, options=options)
+        if self.embedding_is_made_of_pixels:
+            pixels = self._prepare_pixels(self.original_env.render())
+            encoded = self.worldmodel.encode({'pixels': pixels})
+        else:
+            encoded = self.worldmodel.encode(
+                {'state': self._prepare_state(raw_obs)}
+            )
         self.obs_embedding = encoded['emb']
         obs_embedding = (
             self.obs_embedding.squeeze(0).squeeze(0).detach().cpu().numpy()
@@ -251,21 +287,9 @@ class FetchWorldModelEnv(gym.Env):
 
     def _step_env(self, action):
         obs, reward, done, truncated, info = self.original_env.step(action)
-        self.original_env_state["next_obs"] = obs
-        self.original_env_state["reward"] = reward
-        self.original_env_state["done"] = done
-        self.original_env_state["truncated"] = truncated
-        self.original_env_state["info"] = info
+ 
         return obs, reward, done, truncated, info
     
-    def _reset_env_obs(self, seed=None, options=None):
-        obs, info = self.original_env.reset(seed=seed, options=options)
-        self.original_env_state['obs'] = obs
-        self.original_env_state['info'] = info
-        pixels = self.original_env.render()
-        return obs, self._prepare_pixels(pixels)
-
-
 def register_fetch_wm_env():
     try:
         gym.spec('swm/FetchReachWM-v0')

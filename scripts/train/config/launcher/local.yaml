@@ -7,12 +7,14 @@ defaults:
 n_gpus: 1
 cpus_per_task: 8
 cache_dir: null # Use stable-worldmodel default cache
+track: false
 wandb:
-  enabled: false
+  enabled: ${track}
+  project: stable-worldmodel
+  name: ${output_model_name}
+  # Kept for scripts that still pass **cfg.wandb.config to WandbLogger.
   config:
-    entity: stable-wm
-    project: stable-wm
+    project: stable-worldmodel
     name: ${output_model_name}
-    id: ${subdir}
-    resume: allow
-    log_model: False
+    save_code: true
+    log_model: false

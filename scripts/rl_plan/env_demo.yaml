@@ -1,2 +1,0 @@
-world_model_path: '/home/mamad/.stable_worldmodel/checkpoints/lewm'
-checkpoint: 'weights_epoch_100.pt'
