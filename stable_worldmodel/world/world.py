@@ -56,6 +56,34 @@ from ..wrapper import MegaWrapper
 RESET_MODES = ('auto', 'wait')
 
 
+def _log_rollout_episode(
+    policy_name: str,
+    policy_num: int,
+    num_policies: int,
+    ep_len: int,
+    ep_rew: float,
+) -> None:
+    """Print episode stats in the same table style as SB3 training logs."""
+    import sys
+
+    from stable_baselines3.common.logger import HumanOutputFormat
+
+    key_values = {
+        'rollout/policy': policy_name,
+        'rollout/policy_n': f'{policy_num} of {num_policies}',
+        'rollout/ep_len': ep_len,
+        'rollout/ep_rew': ep_rew,
+    }
+    HumanOutputFormat(sys.stdout).write(
+        key_values, {k: () for k in key_values}
+    )
+
+
+def _episode_return_and_length(ep: dict) -> tuple[float, int]:
+    rewards = np.asarray(ep.get('reward', []), dtype=np.float64).reshape(-1)
+    return float(np.nansum(rewards)), int(rewards.size)
+
+
 def _make_env(
     env_name, max_episode_steps, wrappers, add_pixels=True, **kwargs
 ):
@@ -356,6 +384,119 @@ class World:
 
             w.write_episodes(episode_iter())
 
+    
+    def collect_from_collection_of_policies(
+        self,
+        path: str | Path | None = None,
+        episodes_per_policy: int = 10,
+        seed: int | None = None,
+        options: dict | None = None,
+        format: str = 'lance',
+        writer: Any = None,
+        progress: bool = True,
+        exclude_keys: frozenset[str] | set[str] | None = frozenset({'goal'}),
+    ) -> None:
+        """Roll out ``episodes_per_policy`` for each policy and dump trajectories.
+
+        The attached policy must expose ``num_policies`` and ``change_policy()``.
+        The first checkpoint is used as-is; ``change_policy()`` is called before
+        each subsequent batch of ``episodes_per_policy`` episodes.
+        """
+        from tqdm import tqdm
+
+        from stable_worldmodel.data.format import get_format
+
+        if self.policy is None:
+            raise RuntimeError('No policy set.')
+        if not hasattr(self.policy, 'change_policy'):
+            raise AttributeError(
+                'Policy must implement change_policy() for multi-policy collection.'
+            )
+        if not hasattr(self.policy, 'num_policies'):
+            raise AttributeError(
+                'Policy must expose num_policies for multi-policy collection.'
+            )
+
+        skip_keys = set() if exclude_keys is None else set(exclude_keys)
+
+        if (path is None) == (writer is None):
+            raise ValueError(
+                'World.collect_from_collection_of_policies: '
+                'pass exactly one of `path` or `writer`.'
+            )
+
+        if writer is None:
+            writer_cm = get_format(format).open_writer(path)
+        else:
+            writer_cm = writer
+
+        num_policies = self.policy.num_policies
+        total_episodes = episodes_per_policy * num_policies
+        buffers = [defaultdict(list) for _ in range(self.num_envs)]
+
+        def on_step(world):
+            for col, data in world.infos.items():
+                if col.startswith('_') or col in skip_keys:
+                    continue
+                if not isinstance(data, (np.ndarray, torch.Tensor)):
+                    continue
+                if data.ndim > 1 and data.shape[1] == 1:
+                    if isinstance(data, torch.Tensor):
+                        data = data.squeeze(1)
+                    else:
+                        data = np.squeeze(data, axis=1)
+                for i in range(world.num_envs):
+                    val = data[i]
+                    if isinstance(val, torch.Tensor):
+                        val = val.detach().cpu().numpy()
+                    elif isinstance(val, np.ndarray):
+                        val = val.copy()
+                    buffers[i][col].append(val)
+
+        with (
+            writer_cm as w,
+            tqdm(
+                total=total_episodes,
+                desc='Recording',
+                disable=not progress,
+            ) as pbar,
+        ):
+
+            def episode_iter():
+                for policy_idx in range(num_policies):
+                    if policy_idx > 0:
+                        self.policy.change_policy()
+                    batch_seed = seed if policy_idx == 0 else None
+                    for env_idx, _ in self._run_iter(
+                        episodes=episodes_per_policy,
+                        seed=batch_seed,
+                        options=options,
+                        mode='auto',
+                        on_step=on_step,
+                    ):
+                        ep = {k: list(v) for k, v in buffers[env_idx].items()}
+                        buffers[env_idx].clear()
+                        if 'action' in ep:
+                            ep['action'].append(ep['action'].pop(0))
+                        ep_rew, ep_len = _episode_return_and_length(ep)
+                        policy_name = getattr(
+                            self.policy, 'current_policy_name', None
+                        )
+                        if policy_name is None:
+                            policy_name = f'policy_{policy_idx}'
+                        _log_rollout_episode(
+                            policy_name,
+                            policy_idx + 1,
+                            num_policies,
+                            ep_len,
+                            ep_rew,
+                        )
+                        pbar.update(1)
+                        yield ep
+
+            w.write_episodes(episode_iter())
+
+    
     def _run(
         self,
         episodes: int | None = None,

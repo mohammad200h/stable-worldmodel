@@ -31,7 +31,7 @@ class ExpertPolicy(BasePolicy):
         self.env = None
 
     def get_action(self, info: dict) -> np.ndarray:
-        obs = np.asarray(info["observation"], dtype=np.float32)
+        obs = np.asarray(info["state"], dtype=np.float32)
         # World stacks a history dim: (n_envs, 1, dim) -> (n_envs, dim)
         if obs.ndim == 3 and obs.shape[1] == 1:
             obs = obs.squeeze(axis=1)
