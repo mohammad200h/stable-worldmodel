@@ -18,13 +18,35 @@ from stable_worldmodel.wm.loss import SIGReg
 from lightning.pytorch.callbacks import Callback
 from stable_worldmodel.wm.utils import save_pretrained
 
-_WANDB_CLI = argparse.Namespace(track=False, project=None)
+_CLI = argparse.Namespace(
+    track=False, project=None, output_model_name=None, wandb_name=None
+)
+
+
+def resolve_run_names(cfg):
+    """Set output_model_name and wandb.name from prefix + embed_dim when needed."""
+    with open_dict(cfg):
+        if _CLI.output_model_name:
+            cfg.output_model_name = _CLI.output_model_name
+        elif not cfg.get('output_model_name') and cfg.get(
+            'output_model_name_prefix'
+        ):
+            embed_dim = cfg.embed_dim
+            if not OmegaConf.is_list(embed_dim):
+                cfg.output_model_name = (
+                    f'{cfg.output_model_name_prefix}_{embed_dim}'
+                )
+
+        if _CLI.wandb_name:
+            cfg.wandb.name = _CLI.wandb_name
+        elif not cfg.wandb.get('name') and cfg.get('output_model_name'):
+            cfg.wandb.name = cfg.output_model_name
 
 
 def setup_wandb_logger(cfg):
     """Initialize W&B the same way as train_fetch_policy_her.py (--track)."""
     track = (
-        _WANDB_CLI.track
+        _CLI.track
         or cfg.get('track', False)
         or cfg.wandb.get('enabled', False)
     )
@@ -39,7 +61,7 @@ def setup_wandb_logger(cfg):
         ) from exc
 
     project = (
-        _WANDB_CLI.project
+        _CLI.project
         or cfg.wandb.get('project', 'stable-worldmodel')
     )
     name = cfg.wandb.get('name', cfg.output_model_name)
@@ -128,6 +150,8 @@ def lejepa_forward(self, batch, stage, cfg):
 
 @hydra.main(version_base=None, config_path='./config', config_name='lewm')
 def run(cfg):
+    resolve_run_names(cfg)
+
     #########################
     ##       dataset       ##
     #########################
@@ -259,8 +283,8 @@ def run(cfg):
     return
 
 
-def parse_wandb_args(argv=None):
-    """Parse --track/--project before Hydra, like train_fetch_policy_her.py."""
+def parse_cli_args(argv=None):
+    """Parse CLI flags before Hydra, like train_fetch_policy_her.py."""
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         '--track',
@@ -273,12 +297,26 @@ def parse_wandb_args(argv=None):
         default=None,
         help='WandB Cloud project name',
     )
+    parser.add_argument(
+        '--output-model-name',
+        type=str,
+        default=None,
+        help='Checkpoint / run name override (Hydra: output_model_name=...)',
+    )
+    parser.add_argument(
+        '--wandb-name',
+        type=str,
+        default=None,
+        help='WandB run name override (Hydra: wandb.name=...)',
+    )
     args, hydra_args = parser.parse_known_args(argv)
-    _WANDB_CLI.track = args.track
-    _WANDB_CLI.project = args.project
+    _CLI.track = args.track
+    _CLI.project = args.project
+    _CLI.output_model_name = args.output_model_name
+    _CLI.wandb_name = args.wandb_name
     return hydra_args
 
 
 if __name__ == '__main__':
-    sys.argv = [sys.argv[0], *parse_wandb_args()]
+    sys.argv = [sys.argv[0], *parse_cli_args()]
     run()

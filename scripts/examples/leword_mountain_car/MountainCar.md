@@ -23,6 +23,12 @@ cd /home/mamad/PhD/stable-worldmodel/scripts/train
 python3 lewm.py --config-name lewm_state_local data=mountain_car_rl_state.yaml --track
 ```
 
+## Train World Model Searching for hyperprameter doing Grid search
+```bash
+cd /home/mamad/PhD/stable-worldmodel/scripts/train
+python3 lewm_hyperparameter_search.py data=mountain_car_rl_diverse_state --track
+```
+
 # Train RL plan
 ```bash
 python3 train_rl_plan.py --input-state-type state --track
