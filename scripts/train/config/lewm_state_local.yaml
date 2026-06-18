@@ -13,8 +13,12 @@ defaults:
 
 num_workers: 4
 
+
+embed_dim: 8
+
 trainer:
   devices: 2
+  max_epochs: 40
 
 loader:
   batch_size: 192
