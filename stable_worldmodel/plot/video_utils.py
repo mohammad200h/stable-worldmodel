@@ -1,8 +1,57 @@
 from __future__ import annotations
 
+import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
+
+
+def _encode_video_from_npz(npz_path: str, out_path: str, fps: int) -> None:
+    """Encode frames in a clean process (spawn target — no lance/CUDA state)."""
+    stacked = np.load(npz_path)['frames']
+    frames = [stacked[i] for i in range(len(stacked))]
+    Path(npz_path).unlink(missing_ok=True)
+    save_video(Path(out_path), frames, fps=fps)
+
+
+def save_video_isolated(
+    path: Path,
+    frames: list[np.ndarray],
+    fps: int = 15,
+    *,
+    timeout_s: float = 300.0,
+) -> None:
+    """Save video in a spawn subprocess to avoid fork deadlocks with lance/CUDA."""
+    if not frames:
+        return
+    if sys.platform != 'linux':
+        save_video(path, frames, fps=fps)
+        return
+
+    import multiprocessing as mp
+
+    stacked = np.stack([np.asarray(f) for f in frames])
+    with tempfile.NamedTemporaryFile(suffix='.npz', delete=False) as tmp:
+        npz_path = tmp.name
+    np.savez_compressed(npz_path, frames=stacked)
+
+    proc = mp.get_context('spawn').Process(
+        target=_encode_video_from_npz,
+        args=(npz_path, str(path), fps),
+    )
+    proc.start()
+    proc.join(timeout=timeout_s)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join()
+        Path(npz_path).unlink(missing_ok=True)
+        raise TimeoutError(f'Video encoding timed out for {path}')
+    if proc.exitcode != 0:
+        Path(npz_path).unlink(missing_ok=True)
+        raise RuntimeError(
+            f'Video encoding failed for {path} (exit {proc.exitcode})'
+        )
 
 
 def save_video(path: Path, frames: list[np.ndarray], fps: int = 15) -> None:

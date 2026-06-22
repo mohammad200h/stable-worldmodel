@@ -13,7 +13,7 @@ import numpy as np
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.vec_env import VecEnv
 
-from stable_worldmodel.plot import save_video
+from stable_worldmodel.plot import save_video_isolated
 
 try:
     import wandb
@@ -134,12 +134,14 @@ class MountainCarEvalCallback(EvalCallback):
         assert self.video_folder is not None
 
         video_path = self.video_folder / f'eval_{self.num_timesteps:08d}.mp4'
-        save_video(video_path, self._video_frames, fps=self.fps)
+        n_frames = len(self._video_frames)
+        save_video_isolated(video_path, self._video_frames, fps=self.fps)
+        self._video_frames = []
 
         if self.verbose >= 1:
             print(
                 f'MountainCarEvalCallback: saved {video_path} '
-                f'(first eval episode, frames={len(self._video_frames)}, '
+                f'(first eval episode, frames={n_frames}, '
                 f'success_rate={100 * self.last_success_rate:.2f}%, '
                 f'mean_reward={self.last_mean_reward:.2f})'
             )

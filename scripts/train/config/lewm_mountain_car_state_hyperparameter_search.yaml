@@ -24,10 +24,6 @@ wandb:
 
 
 
-
-
-
-
 trainer:
   devices: 2
   max_epochs: 40

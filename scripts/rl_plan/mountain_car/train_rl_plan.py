@@ -1,4 +1,14 @@
 import os
+import sys
+
+if sys.platform == 'linux':
+    import multiprocessing as mp
+
+    try:
+        mp.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass
+
 import argparse
 from pathlib import Path
 
@@ -40,11 +50,16 @@ def _resolve_wm_settings(
     input_state_type: str,
     world_model_path: str | None,
     checkpoint: str | None,
+    embedding_is_made_of_pixels: bool | None = None,
 ) -> tuple[str, str, bool]:
     wm_cfg = _load_wm_yaml(input_state_type)
     path = world_model_path or wm_cfg['world_model_path']
     ckpt = checkpoint or wm_cfg['checkpoint']
-    emb_pixels = wm_cfg['embedding_is_made_of_pixels']
+    emb_pixels = (
+        embedding_is_made_of_pixels
+        if embedding_is_made_of_pixels is not None
+        else wm_cfg['embedding_is_made_of_pixels']
+    )
     return path, ckpt, emb_pixels
 
 
@@ -75,6 +90,8 @@ def train_expert(
     seed: int = 37,
     track: bool = False,
     project_name: str = 'stable-worldmodel-rl-plan',
+    wandb_name: str | None = None,
+    model_name: str | None = None,
     n_steps: int = 2048,
     initial_ent_coef: float = 0.3,
     final_ent_coef: float = 0.001,
@@ -126,7 +143,11 @@ def train_expert(
         ),
     )
 
-    save_path = f'./policies/{env_id.replace("/", "_")}_expert'
+    save_path = (
+        f'./policies/{model_name}'
+        if model_name
+        else f'./policies/{env_id.replace("/", "_")}_expert'
+    )
     os.makedirs(save_path, exist_ok=True)
 
     eval_callback = MountainCarEvalCallback(
@@ -156,7 +177,7 @@ def train_expert(
     if track:
         wandb.init(
             project=project_name,
-            name=f'PPO_{env_id.replace("/", "_")}',
+            name=wandb_name or f'PPO_{env_id.replace("/", "_")}',
             config={
                 'env': env_id,
                 'algo': 'PPO',
@@ -171,6 +192,7 @@ def train_expert(
                 'embedding_is_made_of_pixels': embedding_is_made_of_pixels,
                 'world_model_path': world_model_path,
                 'checkpoint': checkpoint,
+                'model_name': model_name,
             },
             sync_tensorboard=True,
             monitor_gym=True,
@@ -262,6 +284,24 @@ if __name__ == '__main__':
         default='stable-worldmodel',
         help='WandB Cloud project name',
     )
+    parser.add_argument(
+        '--model-name',
+        type=str,
+        default=None,
+        help='Policy save directory name under ./policies/ (default: env-based)',
+    )
+    parser.add_argument(
+        '--wandb-name',
+        type=str,
+        default=None,
+        help='WandB run name (default: PPO_<env>)',
+    )
+    parser.add_argument(
+        '--embedding-is-made-of-pixels',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='Whether WM embeddings come from pixels (default: from yaml)',
+    )
 
     args = parser.parse_args()
 
@@ -269,6 +309,7 @@ if __name__ == '__main__':
         args.input_state_type,
         args.wm_path,
         args.checkpoint,
+        args.embedding_is_made_of_pixels,
     )
 
     train_expert(
@@ -277,6 +318,8 @@ if __name__ == '__main__':
         args.seed,
         args.track,
         args.project,
+        wandb_name=args.wandb_name,
+        model_name=args.model_name,
         n_steps=args.n_steps,
         input_state_type=args.input_state_type,
         world_model_path=wm_path,

@@ -33,3 +33,7 @@ python3 lewm_hyperparameter_search.py data=mountain_car_rl_diverse_state --track
 ```bash
 python3 train_rl_plan.py --input-state-type state --track
 ```
+## Train RL plan Searching for hyperprameter doing Grid search
+```bash
+python3 train_rl_plan_hyperparameter_search.py --track 
+```
