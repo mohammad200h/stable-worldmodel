@@ -18,7 +18,7 @@ world:
 
 seed: 3072
 num_traj: 10000
-episodes_per_policy: 10
+episodes_per_policy: 100
 policies_path: null
 
 options: null

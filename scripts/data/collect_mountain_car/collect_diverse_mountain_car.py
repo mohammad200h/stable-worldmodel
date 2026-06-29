@@ -41,7 +41,7 @@ def run(cfg):
     world.collect_from_collection_of_policies(
         Path(cfg.cache_dir or swm.data.utils.get_cache_dir())
         / 'datasets'
-        / 'mountain_car_diverse_rl_agent.lance',
+        / f'mountain_car_diverse_rl_agent_{cfg.episodes_per_policy}.lance',
         episodes_per_policy=episodes_per_policy,
         seed=rng.integers(0, 1_000_000).item(),
         options=options,

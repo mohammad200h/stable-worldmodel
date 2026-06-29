@@ -1,7 +1,7 @@
 dataset:
   num_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}  # 4 with default wm.*
   frameskip: 5
-  name: mountain_car_diverse_rl_agent.lance
+  name: mountain_car_diverse_rl_agent_100.lance
   keys_to_load:
     - action
     - state
