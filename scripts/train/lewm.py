@@ -9,6 +9,7 @@ import stable_pretraining as spt
 from stable_pretraining import data as dt
 import stable_worldmodel as swm
 import torch
+import torch.nn.functional as F
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf, open_dict
 
@@ -23,23 +24,60 @@ _CLI = argparse.Namespace(
 )
 
 
+def build_lewm_run_name(
+    *,
+    prefix: str,
+    embed_dim,
+    reward_enabled: bool = False,
+    continue_enabled: bool = False,
+    reward_mode: str | None = None,
+    continue_mode: str | None = None,
+    heads_input: str | None = None,
+) -> str:
+    """Build run name: prefix_embedDim[_rlHeadsInput].
+
+  RL suffix rules:
+  - no RL heads enabled → no suffix
+  - reward only → reward mode
+  - continue only → continue mode
+  - both enabled → shared heads_input (or reward mode as fallback)
+    """
+    parts = [prefix, str(embed_dim)]
+    if not reward_enabled and not continue_enabled:
+        return '_'.join(parts)
+    if heads_input is not None:
+        parts.append(heads_input)
+    elif reward_enabled and not continue_enabled and reward_mode is not None:
+        parts.append(str(reward_mode))
+    elif continue_enabled and not reward_enabled and continue_mode is not None:
+        parts.append(str(continue_mode))
+    elif reward_enabled and continue_enabled:
+        mode = reward_mode or continue_mode
+        if mode is not None:
+            parts.append(str(mode))
+    return '_'.join(parts)
+
+
 def resolve_run_names(cfg):
-    """Set output_model_name and wandb.name from prefix + embed_dim when needed."""
+    """Set output_model_name and wandb.name from prefix, embed_dim, and RL heads."""
     with open_dict(cfg):
         if _CLI.output_model_name:
             cfg.output_model_name = _CLI.output_model_name
-        elif not cfg.get('output_model_name') and cfg.get(
-            'output_model_name_prefix'
+        elif cfg.get('output_model_name_prefix') and not OmegaConf.is_list(
+            cfg.get('embed_dim')
         ):
-            embed_dim = cfg.embed_dim
-            if not OmegaConf.is_list(embed_dim):
-                cfg.output_model_name = (
-                    f'{cfg.output_model_name_prefix}_{embed_dim}'
-                )
+            cfg.output_model_name = build_lewm_run_name(
+                prefix=cfg.output_model_name_prefix,
+                embed_dim=cfg.embed_dim,
+                reward_enabled=cfg.reward_prediction.get('enabled', False),
+                continue_enabled=cfg.continue_prediction.get('enabled', False),
+                reward_mode=cfg.reward_prediction.get('mode'),
+                continue_mode=cfg.continue_prediction.get('mode'),
+            )
 
         if _CLI.wandb_name:
             cfg.wandb.name = _CLI.wandb_name
-        elif not cfg.wandb.get('name') and cfg.get('output_model_name'):
+        elif cfg.get('output_model_name'):
             cfg.wandb.name = cfg.output_model_name
 
 
@@ -113,6 +151,16 @@ class SaveCkptCallback(Callback):
         )
 
 
+def _slice_transition_batch(batch, key, offset, n_steps):
+    return batch[key][:, offset : offset + n_steps].float().squeeze(-1)
+
+
+def _continue_target(batch, offset, n_steps):
+    terminated = _slice_transition_batch(batch, 'terminated', offset, n_steps)
+    truncated = _slice_transition_batch(batch, 'truncated', offset, n_steps)
+    return (~terminated.bool() & ~truncated.bool()).float()
+
+
 def lejepa_forward(self, batch, stage, cfg):
     """encode observations, predict next states, compute losses."""
 
@@ -141,10 +189,68 @@ def lejepa_forward(self, batch, stage, cfg):
     output['sigreg_loss'] = self.sigreg(emb.transpose(0, 1))
     output['loss'] = output['pred_loss'] + lambd * output['sigreg_loss']
 
-    losses_dict = {
-        f'{stage}/{k}': v.detach() for k, v in output.items() if 'loss' in k
-    }
-    self.log_dict(losses_dict, on_step=True, sync_dist=True)
+    use_transition_heads = (
+        cfg.reward_prediction.get('enabled', False)
+        or cfg.continue_prediction.get('enabled', False)
+    )
+    if use_transition_heads:
+        n_steps = tgt_emb.size(1)
+        offset = n_preds - 1
+        z_cur, z_next, act = self.model.align_transition_batch(
+            emb, tgt_emb, act_emb, n_preds
+        )
+    else:
+        n_steps = 0
+        offset = 0
+        z_cur = z_next = act = None
+
+    if cfg.reward_prediction.get('enabled', False):
+        reward_pred = self.model.predict_reward(
+            z_cur, z_pred=z_next, act_emb=act
+        )
+        reward_tgt = _slice_transition_batch(batch, 'reward', offset, n_steps)
+        output['reward_loss'] = (reward_pred - reward_tgt).pow(2).mean()
+        output['reward_loss_weighted'] = (
+            cfg.reward_prediction.weight * output['reward_loss']
+        )
+        output['loss'] = output['loss'] + output['reward_loss_weighted']
+    else:
+        output['reward_loss'] = emb.new_zeros(())
+        output['reward_loss_weighted'] = emb.new_zeros(())
+
+    if cfg.continue_prediction.get('enabled', False):
+        continue_logit = self.model.predict_continue(
+            z_cur, z_pred=z_next, act_emb=act
+        )
+        continue_tgt = _continue_target(batch, offset, n_steps)
+        output['continue_loss'] = F.binary_cross_entropy_with_logits(
+            continue_logit, continue_tgt
+        )
+        output['continue_loss_weighted'] = (
+            cfg.continue_prediction.weight * output['continue_loss']
+        )
+        output['loss'] = output['loss'] + output['continue_loss_weighted']
+    else:
+        output['continue_loss'] = emb.new_zeros(())
+        output['continue_loss_weighted'] = emb.new_zeros(())
+
+    self.log_dict(
+        {
+            f'{stage}/pred_loss': output['pred_loss'].detach(),
+            f'{stage}/sigreg_loss': output['sigreg_loss'].detach(),
+            f'{stage}/reward_loss': output['reward_loss'].detach(),
+            f'{stage}/reward_loss_weighted': output[
+                'reward_loss_weighted'
+            ].detach(),
+            f'{stage}/continue_loss': output['continue_loss'].detach(),
+            f'{stage}/continue_loss_weighted': output[
+                'continue_loss_weighted'
+            ].detach(),
+            f'{stage}/loss': output['loss'].detach(),
+        },
+        on_step=True,
+        sync_dist=True,
+    )
     return output
 
 
@@ -155,6 +261,16 @@ def run(cfg):
     #########################
     ##       dataset       ##
     #########################
+
+    with open_dict(cfg):
+        keys_to_load = list(cfg.data.dataset.keys_to_load)
+        if cfg.reward_prediction.get('enabled', False) and 'reward' not in keys_to_load:
+            keys_to_load.append('reward')
+        if cfg.continue_prediction.get('enabled', False):
+            for key in ('terminated', 'truncated'):
+                if key not in keys_to_load:
+                    keys_to_load.append(key)
+        cfg.data.dataset.keys_to_load = keys_to_load
 
     dataset_cfg = OmegaConf.to_container(cfg.data.dataset, resolve=True)
     dataset_name = dataset_cfg.pop('name')
@@ -183,7 +299,7 @@ def run(cfg):
         for col in norm_cols:
             if col not in cfg.data.dataset.keys_to_load:
                 continue
-            if col.startswith('pixels'):
+            if col.startswith('pixels') or col in ('reward', 'terminated', 'truncated'):
                 continue
             transforms.append(get_column_normalizer(dataset, col, col))
 

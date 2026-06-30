@@ -31,6 +31,8 @@ python3 lewm.py --config-name lewm_state_local data=mountain_car_rl_state.yaml -
 
 ## Train World Model Searching for hyperprameter doing Grid search
 
+Grid over `embed_dim` × `rl_prediction_heads_input` for each enabled RL head (`reward_prediction`, `continue_prediction`). See `lewm_mountain_car_state_hyperparameter_search.yaml`.
+
 ```bash
 cd /home/mamad/PhD/stable-worldmodel/scripts/train
 python3 lewm_hyperparameter_search.py data=mountain_car_rl_diverse_state --track

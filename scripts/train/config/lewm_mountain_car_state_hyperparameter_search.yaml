@@ -15,12 +15,26 @@ num_workers: 4
 
 
 output_model_name_prefix: lewm_mountain_car_state
-output_model_name: ${output_model_name_prefix}_${embed_dim}
+# Built at runtime by resolve_run_names / lewm_hyperparameter_search.py
+output_model_name: null
 embed_dim: [2, 4, 8, 16, 32, 64, 128]
+# Shared input mode for enabled RL heads (reward + continue)
+rl_prediction_heads_input: [current_emb, current_and_pred_emb, current_pred_emb_and_action]
+
+reward_prediction:
+  enabled: true
+  mode: current_emb
+  weight: 1.0
+
+continue_prediction:
+  enabled: true
+  mode: current_emb
+  weight: 1.0
 
 wandb:
   project: lewm_mountain_car_state_hyperparameter_search
-  name: ${output_model_name_prefix}_${embed_dim}
+  name: null
+
 
 
 

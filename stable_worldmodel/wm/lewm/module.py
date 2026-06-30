@@ -1,7 +1,28 @@
+from enum import Enum
+
 import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
+
+
+class RewardPredictionMode(str, Enum):
+    """Input features for the reward predictor head."""
+
+    CURRENT_EMB = 'current_emb'
+    CURRENT_AND_PRED_EMB = 'current_and_pred_emb'
+    CURRENT_PRED_EMB_AND_ACTION = 'current_pred_emb_and_action'
+
+    @classmethod
+    def from_str(cls, mode: str) -> 'RewardPredictionMode':
+        try:
+            return cls(mode)
+        except ValueError as exc:
+            valid = ', '.join(m.value for m in cls)
+            raise ValueError(
+                f'Unknown reward prediction mode {mode!r}. '
+                f'Expected one of: {valid}.'
+            ) from exc
 
 
 def detach_clone(v):
@@ -326,3 +347,98 @@ class Predictor(nn.Module):
         x = self.dropout(x)
         x = self.transformer(x, c)
         return x
+
+
+class RewardPredictionMode(str, Enum):
+    """Input features for latent transition heads (reward, continue, ...)."""
+
+    CURRENT_EMB = 'current_emb'
+    CURRENT_AND_PRED_EMB = 'current_and_pred_emb'
+    CURRENT_PRED_EMB_AND_ACTION = 'current_pred_emb_and_action'
+
+    @classmethod
+    def from_str(cls, mode: str) -> 'RewardPredictionMode':
+        try:
+            return cls(mode)
+        except ValueError as exc:
+            valid = ', '.join(m.value for m in cls)
+            raise ValueError(
+                f'Unknown latent head mode {mode!r}. '
+                f'Expected one of: {valid}.'
+            ) from exc
+
+
+def latent_head_input_dim(
+    mode: RewardPredictionMode,
+    embed_dim: int,
+    action_emb_dim: int,
+) -> int:
+    return {
+        RewardPredictionMode.CURRENT_EMB: embed_dim,
+        RewardPredictionMode.CURRENT_AND_PRED_EMB: 2 * embed_dim,
+        RewardPredictionMode.CURRENT_PRED_EMB_AND_ACTION: (
+            2 * embed_dim + action_emb_dim
+        ),
+    }[mode]
+
+
+def build_latent_head_features(
+    mode: RewardPredictionMode,
+    z_cur: torch.Tensor,
+    z_pred: torch.Tensor | None = None,
+    act_emb: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if mode == RewardPredictionMode.CURRENT_EMB:
+        return z_cur
+    if mode == RewardPredictionMode.CURRENT_AND_PRED_EMB:
+        if z_pred is None:
+            raise ValueError(f'mode={mode.value} requires z_pred.')
+        return torch.cat([z_cur, z_pred], dim=-1)
+    if z_pred is None or act_emb is None:
+        raise ValueError(f'mode={mode.value} requires z_pred and act_emb.')
+    return torch.cat([z_cur, z_pred, act_emb], dim=-1)
+
+
+class LatentTransitionHead(nn.Module):
+    """MLP head over latent transition features (shared by reward / continue)."""
+
+    def __init__(
+        self,
+        mode: str,
+        embed_dim: int,
+        action_emb_dim: int,
+        hidden_dim: int | None = None,
+    ):
+        super().__init__()
+        self.mode = RewardPredictionMode.from_str(mode)
+        hidden_dim = hidden_dim or 4 * embed_dim
+        input_dim = latent_head_input_dim(
+            self.mode, embed_dim, action_emb_dim
+        )
+        self.head = MLP(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            output_dim=1,
+            norm_fn=nn.LayerNorm,
+        )
+        nn.init.zeros_(self.head.net[-1].weight)
+        nn.init.zeros_(self.head.net[-1].bias)
+
+    def forward(
+        self,
+        z_cur: torch.Tensor,
+        z_pred: torch.Tensor | None = None,
+        act_emb: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        features = build_latent_head_features(
+            self.mode, z_cur, z_pred=z_pred, act_emb=act_emb
+        )
+        return self.head(features).squeeze(-1)
+
+
+class RewardPredictor(LatentTransitionHead):
+    """Predict scalar reward from latent transition features."""
+
+
+class ContinuePredictor(LatentTransitionHead):
+    """Predict episode-continue logit from latent transition features."""

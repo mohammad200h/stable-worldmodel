@@ -3,6 +3,16 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
+from .module import (
+    ContinuePredictor,
+    RewardPredictor,
+    RewardPredictionMode,
+)
+
+
+def _head_cfg(cfg: dict | None) -> dict:
+    return cfg or {}
+
 
 class LeWM(nn.Module):
     def __init__(
@@ -12,7 +22,9 @@ class LeWM(nn.Module):
         action_encoder,
         projector=None,
         pred_proj=None,
-        pixel_encoding = True,
+        pixel_encoding=True,
+        reward_prediction=None,
+        continue_prediction=None,
         **kwargs,
     ):
         super().__init__()
@@ -22,6 +34,24 @@ class LeWM(nn.Module):
         self.action_encoder = action_encoder
         self.projector = projector or nn.Identity()
         self.pred_proj = pred_proj or nn.Identity()
+        self.reward_prediction_cfg = _head_cfg(reward_prediction)
+        self.continue_prediction_cfg = _head_cfg(continue_prediction)
+        self.reward_predictor = None
+        self.continue_predictor = None
+        if self.reward_prediction_cfg.get('enabled', False):
+            self.reward_predictor = RewardPredictor(
+                mode=self.reward_prediction_cfg['mode'],
+                embed_dim=self.reward_prediction_cfg['embed_dim'],
+                action_emb_dim=self.reward_prediction_cfg['action_emb_dim'],
+                hidden_dim=self.reward_prediction_cfg.get('hidden_dim'),
+            )
+        if self.continue_prediction_cfg.get('enabled', False):
+            self.continue_predictor = ContinuePredictor(
+                mode=self.continue_prediction_cfg['mode'],
+                embed_dim=self.continue_prediction_cfg['embed_dim'],
+                action_emb_dim=self.continue_prediction_cfg['action_emb_dim'],
+                hidden_dim=self.continue_prediction_cfg.get('hidden_dim'),
+            )
 
         self.pixel_encoding = pixel_encoding
         if pixel_encoding:
@@ -41,6 +71,80 @@ class LeWM(nn.Module):
         preds = self.pred_proj(rearrange(preds, 'b t d -> (b t) d'))
         preds = rearrange(preds, '(b t) d -> b t d', b=emb.size(0))
         return preds
+
+    @property
+    def reward_prediction_enabled(self) -> bool:
+        return self.reward_predictor is not None
+
+    @property
+    def continue_prediction_enabled(self) -> bool:
+        return self.continue_predictor is not None
+
+    @property
+    def transition_head_mode(self) -> RewardPredictionMode | None:
+        if self.reward_predictor is not None:
+            return self.reward_predictor.mode
+        if self.continue_predictor is not None:
+            return self.continue_predictor.mode
+        return None
+
+    @property
+    def reward_prediction_mode(self) -> RewardPredictionMode | None:
+        if self.reward_predictor is None:
+            return None
+        return self.reward_predictor.mode
+
+    def predict_reward(
+        self,
+        z_cur: torch.Tensor,
+        z_pred: torch.Tensor | None = None,
+        act_emb: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Predict reward for a latent transition."""
+        if self.reward_predictor is None:
+            raise RuntimeError(
+                'Reward prediction is disabled. '
+                'Enable reward_prediction in the model config.'
+            )
+        return self.reward_predictor(z_cur, z_pred=z_pred, act_emb=act_emb)
+
+    def predict_continue(
+        self,
+        z_cur: torch.Tensor,
+        z_pred: torch.Tensor | None = None,
+        act_emb: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Predict episode-continue logit for a latent transition."""
+        if self.continue_predictor is None:
+            raise RuntimeError(
+                'Continue prediction is disabled. '
+                'Enable continue_prediction in the model config.'
+            )
+        return self.continue_predictor(z_cur, z_pred=z_pred, act_emb=act_emb)
+
+    def align_transition_batch(
+        self,
+        emb: torch.Tensor,
+        tgt_emb: torch.Tensor,
+        act_emb: torch.Tensor,
+        n_preds: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Align latent tensors with predictor outputs for head training."""
+        n_steps = tgt_emb.size(1)
+        offset = n_preds - 1
+        z_cur = emb[:, offset : offset + n_steps]
+        z_next = tgt_emb[:, :n_steps]
+        act = act_emb[:, offset : offset + n_steps]
+        return z_cur, z_next, act
+
+    def align_reward_batch(
+        self,
+        emb: torch.Tensor,
+        tgt_emb: torch.Tensor,
+        act_emb: torch.Tensor,
+        n_preds: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.align_transition_batch(emb, tgt_emb, act_emb, n_preds)
 
     def _encode_pixels(self, info):
         """Encode observations and actions into embeddings.

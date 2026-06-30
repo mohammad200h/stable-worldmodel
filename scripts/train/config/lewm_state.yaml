@@ -43,6 +43,20 @@ wm:
   history_size: 3
   num_preds: 1
 
+reward_prediction:
+  enabled: false
+  # current_emb | current_and_pred_emb | current_pred_emb_and_action
+  mode: current_emb
+  weight: 1.0
+  hidden_dim: 2048
+
+continue_prediction:
+  enabled: false
+  # same modes as reward_prediction
+  mode: current_emb
+  weight: 1.0
+  hidden_dim: 2048
+
 model:
   _target_: stable_worldmodel.wm.lewm.LeWM
   pixel_encoding: False
@@ -83,6 +97,18 @@ model:
     norm_fn:
       _target_: torch.nn.BatchNorm1d
       _partial_: true
+  reward_prediction:
+    enabled: ${reward_prediction.enabled}
+    mode: ${reward_prediction.mode}
+    embed_dim: ${embed_dim}
+    action_emb_dim: ${embed_dim}
+    hidden_dim: ${reward_prediction.hidden_dim}
+  continue_prediction:
+    enabled: ${continue_prediction.enabled}
+    mode: ${continue_prediction.mode}
+    embed_dim: ${embed_dim}
+    action_emb_dim: ${embed_dim}
+    hidden_dim: ${continue_prediction.hidden_dim}
 
 loss:
   sigreg:
