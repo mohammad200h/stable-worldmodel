@@ -21,6 +21,7 @@ class MountainCarWorldModelEnv(gym.Env):
         device=None,
         img_size=224,
         embedding_is_made_of_pixels=True,
+        hybrid_mode=True,
         env_id='swm/MountainCarContinuousControl-v0',
         **kwargs,
     ):
@@ -29,9 +30,21 @@ class MountainCarWorldModelEnv(gym.Env):
         )
 
         self.embedding_is_made_of_pixels = embedding_is_made_of_pixels
-
+        # Hybrid: WM observations, original env reward/done. Otherwise WM reward/done too.
+        self.hybrid_mode = hybrid_mode
         self.wm_config = self._load_wm_config(world_model_path)
         self.worldmodel = self._load_worldmodel(world_model_path, checkpoint)
+        if not self.hybrid_mode:
+            if not self.worldmodel.reward_prediction_enabled:
+                raise ValueError(
+                    'hybrid_mode=False requires reward_prediction enabled '
+                    'on the loaded world model.'
+                )
+            if not self.worldmodel.continue_prediction_enabled:
+                raise ValueError(
+                    'hybrid_mode=False requires continue_prediction enabled '
+                    'on the loaded world model.'
+                )
 
         
 
@@ -197,20 +210,49 @@ class MountainCarWorldModelEnv(gym.Env):
 
     def step(self, action):
         wm_action = self._prepare_wm_action(action)
-        next_embedding = self._step_wm(self.obs_embedding, wm_action)
+        next_embedding, z_cur, act_emb = self._step_wm(
+            self.obs_embedding, wm_action
+        )
         self.obs_embedding = next_embedding
         obs_embedding = (
             next_embedding.squeeze(0).squeeze(0).detach().cpu().numpy()
         )
 
-        raw_obs, reward, done, truncated, info = self._step_env(action)
+        _, env_reward, env_terminated, truncated, info = self._step_env(action)
+        if self.hybrid_mode:
+            reward, terminated = env_reward, env_terminated
+        else:
+            reward, terminated = self._predict_wm_reward_done(
+                z_cur, next_embedding, act_emb
+            )
+            info = {
+                **info,
+                'env_reward': env_reward,
+                'env_terminated': env_terminated,
+                'wm_reward': reward,
+                'wm_terminated': terminated,
+            }
         return (
             np.asarray(obs_embedding, dtype=np.float32),
             reward,
-            done,
+            terminated,
             truncated,
             info,
         )
+
+    def _predict_wm_reward_done(self, z_cur, z_pred, act_emb):
+        with torch.no_grad():
+            reward = self.worldmodel.predict_reward(
+                z_cur, z_pred=z_pred, act_emb=act_emb
+            )
+            continue_logit = self.worldmodel.predict_continue(
+                z_cur, z_pred=z_pred, act_emb=act_emb
+            )
+        reward = float(reward.reshape(-1)[0].item())
+        continue_logit = float(continue_logit.reshape(-1)[0].item())
+        # continue_logit > 0 means episode continues; terminated is the opposite.
+        terminated = continue_logit <= 0.0
+        return reward, terminated
 
     def close(self):
         self.original_env.close()
@@ -223,7 +265,9 @@ class MountainCarWorldModelEnv(gym.Env):
             action: (A,), (B, A), or (B, T, A) actions aligned with history.
 
         Returns:
-            (B, 1, D) predicted next embedding.
+            z_pred: (B, 1, D) predicted next embedding.
+            z_cur: (B, 1, D) current embedding at the transition.
+            act_emb: (B, 1, A_emb) action embedding for the transition.
         """
         dtype = next(self.worldmodel.parameters()).dtype
 
@@ -255,7 +299,8 @@ class MountainCarWorldModelEnv(gym.Env):
 
         act_emb = self.worldmodel.action_encoder(action)
         with torch.no_grad():
-            return self.worldmodel.predict(emb, act_emb)[:, -1:]
+            z_pred = self.worldmodel.predict(emb, act_emb)[:, -1:]
+        return z_pred, emb, act_emb
 
     def _step_env(self, action):
         obs, reward, done, truncated, info = self.original_env.step(action)

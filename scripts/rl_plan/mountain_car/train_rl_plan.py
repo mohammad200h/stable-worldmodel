@@ -68,6 +68,7 @@ def _make_env(
     world_model_path: str | None,
     checkpoint: str | None,
     embedding_is_made_of_pixels: bool = True,
+    hybrid_mode: bool = True,
 ):
     if env_id == _WM_ENV_ID:
         if world_model_path is None or checkpoint is None:
@@ -80,6 +81,7 @@ def _make_env(
             world_model_path=world_model_path,
             checkpoint=checkpoint,
             embedding_is_made_of_pixels=embedding_is_made_of_pixels,
+            hybrid_mode=hybrid_mode,
         )
     return gym.make(env_id)
 
@@ -101,6 +103,7 @@ def train_expert(
     world_model_path: str | None = None,
     checkpoint: str | None = None,
     embedding_is_made_of_pixels: bool = True,
+    hybrid_mode: bool = True,
 ):
     """
     Train PPO on Mountain Car with world-model latent observations.
@@ -112,6 +115,7 @@ def train_expert(
     print(f' Training Expert Policy for {env_id}')
     print(f' Setup: PPO | {total_timesteps} Timesteps | Seed: {seed}')
     print(f' WM input: {input_state_type} (pixels={embedding_is_made_of_pixels})')
+    print(f' Hybrid mode: {hybrid_mode}')
     print('===================================================')
 
     env = Monitor(
@@ -120,6 +124,7 @@ def train_expert(
             world_model_path,
             checkpoint,
             embedding_is_made_of_pixels,
+            hybrid_mode,
         )
     )
     eval_env = Monitor(
@@ -128,6 +133,7 @@ def train_expert(
             world_model_path,
             checkpoint,
             embedding_is_made_of_pixels,
+            hybrid_mode,
         )
     )
 
@@ -192,6 +198,7 @@ def train_expert(
                 'embedding_is_made_of_pixels': embedding_is_made_of_pixels,
                 'world_model_path': world_model_path,
                 'checkpoint': checkpoint,
+                'hybrid_mode': hybrid_mode,
                 'model_name': model_name,
             },
             sync_tensorboard=True,
@@ -302,6 +309,15 @@ if __name__ == '__main__':
         default=None,
         help='Whether WM embeddings come from pixels (default: from yaml)',
     )
+    parser.add_argument(
+        '--hybrid-mode',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            'Use original env reward/done with WM observations (default: true). '
+            'Set --no-hybrid-mode to use WM reward and continue heads.'
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -325,4 +341,5 @@ if __name__ == '__main__':
         world_model_path=wm_path,
         checkpoint=ckpt,
         embedding_is_made_of_pixels=emb_pixels,
+        hybrid_mode=args.hybrid_mode,
     )

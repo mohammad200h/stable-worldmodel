@@ -4,12 +4,15 @@ embedding_is_made_of_pixels: false
 timesteps: 500000
 seed: 42
 
-embed_dim: [2, 4, 8, 16, 32, 64, 128]
+embed_dim: [16, 32, 64, 128]
+hybrid_mode: false
+rl_prediction_heads_input: [current_emb, current_and_pred_emb, current_pred_emb_and_action]
 
-world_model_path: ${world_model_path_prefix}${embed_dim}/${checkpoint}
 
-model_name: lewm_mountain_car_state_rl_plan_${embed_dim}
+world_model_path: ${world_model_path_prefix}${embed_dim}_${rl_prediction_heads_input}/${checkpoint}
+
+model_name: lewm_mountain_car_state_rl_plan_${embed_dim}_${rl_prediction_heads_input}
 
 wandb:
   project: lewm_mountain_car_state_rl_plan
-  name: ${model_name}_${embed_dim}
+  name: ${model_name}_${embed_dim}_${rl_prediction_heads_input}

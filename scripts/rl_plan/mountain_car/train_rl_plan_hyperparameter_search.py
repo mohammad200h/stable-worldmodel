@@ -1,6 +1,7 @@
-"""Grid search over embed_dim by launching train_rl_plan.py once per value."""
+"""Grid search over embed_dim and rl_prediction_heads_input via train_rl_plan.py."""
 
 import argparse
+import itertools
 import subprocess
 import sys
 from pathlib import Path
@@ -18,19 +19,43 @@ def load_search_config(config_path: Path):
     return OmegaConf.load(config_path)
 
 
-def iter_embed_dims(embed_dim):
-    if isinstance(embed_dim, (list, ListConfig)):
-        return list(embed_dim)
-    return [embed_dim]
+def iter_search_values(value):
+    if isinstance(value, (list, ListConfig)):
+        return list(value)
+    if value is None:
+        return [None]
+    return [value]
 
 
-def resolve_run_settings(cfg, embed_dim: int) -> dict:
-    run_cfg = OmegaConf.merge(cfg, OmegaConf.create({'embed_dim': embed_dim}))
+def get_embed_dims(cfg):
+    return iter_search_values(cfg.get('embed_dim'))
+
+
+def get_rl_prediction_heads_input_modes(cfg):
+    if 'rl_prediction_heads_input' in cfg:
+        return iter_search_values(cfg.rl_prediction_heads_input)
+    return [None]
+
+
+def resolve_run_settings(
+    cfg,
+    embed_dim: int,
+    rl_prediction_heads_input: str | None,
+) -> dict:
+    overrides = {'embed_dim': embed_dim}
+    if rl_prediction_heads_input is not None:
+        overrides['rl_prediction_heads_input'] = rl_prediction_heads_input
+    run_cfg = OmegaConf.merge(cfg, OmegaConf.create(overrides))
     OmegaConf.resolve(run_cfg)
+
+    wm_checkpoint_path = Path(run_cfg.world_model_path)
     return {
-        'world_model_path': f'{run_cfg.world_model_path_prefix}{embed_dim}',
+        'embed_dim': embed_dim,
+        'rl_prediction_heads_input': rl_prediction_heads_input,
+        'world_model_path': str(wm_checkpoint_path.parent),
         'checkpoint': run_cfg.checkpoint,
         'embedding_is_made_of_pixels': run_cfg.embedding_is_made_of_pixels,
+        'hybrid_mode': run_cfg.get('hybrid_mode', True),
         'model_name': run_cfg.model_name,
         'wandb_project': run_cfg.wandb.project,
         'wandb_name': run_cfg.wandb.name,
@@ -69,26 +94,33 @@ def run_train_rl_plan(
         cmd.append('--embedding-is-made-of-pixels')
     else:
         cmd.append('--no-embedding-is-made-of-pixels')
+    if settings['hybrid_mode']:
+        cmd.append('--hybrid-mode')
+    else:
+        cmd.append('--no-hybrid-mode')
     if track:
         cmd.append('--track')
 
-    print(
-        f'\n=== embed_dim={settings["embed_dim"]} '
-        f'({settings["model_name"]}) ==='
-    )
+    label = f'embed_dim={settings["embed_dim"]}'
+    if settings['rl_prediction_heads_input'] is not None:
+        label += f', rl_prediction_heads_input={settings["rl_prediction_heads_input"]}'
+    print(f'\n=== {label} ({settings["model_name"]}) ===')
     print(' '.join(cmd))
     subprocess.run(cmd, check=True)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description='Grid search RL-plan embed_dim via train_rl_plan.py'
+        description=(
+            'Grid search RL-plan embed_dim and rl_prediction_heads_input '
+            'via train_rl_plan.py'
+        )
     )
     parser.add_argument(
         '--config',
         type=Path,
         default=DEFAULT_CONFIG,
-        help='Search config with embed_dim list and wandb settings',
+        help='Search config with embed_dim / rl_prediction_heads_input grids',
     )
     parser.add_argument(
         '--track',
@@ -109,17 +141,19 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     cfg = load_search_config(args.config)
-    embed_dims = iter_embed_dims(cfg.embed_dim)
+    embed_dims = get_embed_dims(cfg)
+    heads_input_modes = get_rl_prediction_heads_input_modes(cfg)
+    hybrid_mode = cfg.get('hybrid_mode', True)
     wandb_project = args.project or cfg.wandb.get('project')
 
     print(
         f'Starting grid search: embed_dims={embed_dims}, '
-        f'project={wandb_project}'
+        f'rl_prediction_heads_input={heads_input_modes}, '
+        f'hybrid_mode={hybrid_mode}, project={wandb_project}'
     )
 
-    for embed_dim in embed_dims:
-        settings = resolve_run_settings(cfg, embed_dim)
-        settings['embed_dim'] = embed_dim
+    for embed_dim, heads_input in itertools.product(embed_dims, heads_input_modes):
+        settings = resolve_run_settings(cfg, embed_dim, heads_input)
         if wandb_project:
             settings['wandb_project'] = wandb_project
         run_train_rl_plan(settings, track=args.track, train_args=args.train_args)
