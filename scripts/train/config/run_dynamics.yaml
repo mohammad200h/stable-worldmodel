@@ -1,0 +1,124 @@
+defaults:
+  - _self_
+  - launcher: local
+  - data: pusht_reward
+
+output_model_name: lewm_dynamics
+subdir: ${hydra:job.id}
+require_reward_head: true
+require_continue_head: false
+
+num_workers: 6
+train_split: 0.9
+seed: 3072
+img_size: 224
+patch_size: 14
+encoder_scale: tiny
+embed_dim: 192
+
+trainer:
+  max_epochs: 100
+  devices: auto
+  accelerator: gpu
+  precision: bf16
+  gradient_clip_val: 1.0
+
+loader:
+  batch_size: 128
+  num_workers: ${num_workers}
+  drop_last: True
+  persistent_workers: True
+  prefetch_factor: 3
+  pin_memory: True
+  shuffle: True
+
+optimizer:
+  type: AdamW
+  lr: 5e-5
+  weight_decay: 1e-3
+
+wm:
+  history_size: 3
+  num_preds: 1
+
+# DreamerV3 original reward head (symexp_twohot, CE / log_prob — no soft-mean loss)
+reward:
+  num_bins: 255
+  hidden_dim: 1024
+  layers: 1
+  act: silu
+
+# DreamerV3 continue head (binary Bernoulli, contdisc soft labels)
+continue:
+  hidden_dim: 1024
+  layers: 1
+  act: silu
+
+model:
+  _target_: stable_worldmodel.wm.lewm.LeWM
+  encoder:
+    _target_: stable_pretraining.backbone.utils.vit_hf
+    size: ${encoder_scale}
+    patch_size: ${patch_size}
+    image_size: ${img_size}
+    pretrained: false
+    use_mask_token: false
+  predictor:
+    _target_: stable_worldmodel.wm.lewm.module.Predictor
+    num_frames: ${wm.history_size}
+    input_dim: ${embed_dim}
+    hidden_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    depth: 6
+    heads: 16
+    mlp_dim: 2048
+    dim_head: 64
+    dropout: 0.1
+    emb_dropout: 0.0
+  action_encoder:
+    _target_: stable_worldmodel.wm.lewm.module.Embedder
+    input_dim: ???
+    emb_dim: ${embed_dim}
+  projector:
+    _target_: stable_worldmodel.wm.lewm.module.MLP
+    input_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    hidden_dim: 2048
+    norm_fn:
+      _target_: torch.nn.BatchNorm1d
+      _partial_: true
+  pred_proj:
+    _target_: stable_worldmodel.wm.lewm.module.MLP
+    input_dim: ${embed_dim}
+    output_dim: ${embed_dim}
+    hidden_dim: 2048
+    norm_fn:
+      _target_: torch.nn.BatchNorm1d
+      _partial_: true
+  reward_head:
+    _target_: stable_worldmodel.wm.dreamerv3_reward.DreamerV3RewardHead
+    input_dim: ${embed_dim}
+    hidden_dim: ${reward.hidden_dim}
+    num_bins: ${reward.num_bins}
+    layers: ${reward.layers}
+    act: ${reward.act}
+  continue_head:
+    _target_: stable_worldmodel.wm.dreamerv3_continue.DreamerV3ContinueHead
+    input_dim: ${embed_dim}
+    hidden_dim: ${continue.hidden_dim}
+    layers: ${continue.layers}
+    act: ${continue.act}
+
+loss:
+  sigreg:
+    weight: 0.09
+    kwargs:
+      knots: 17
+      num_proj: 1024
+  reward_weight: 1.0
+  # Match DreamerV3 reward_grad: backprop reward CE into predicted latents
+  reward_grad: true
+  continue_weight: 1.0
+  continue_grad: true
+  contdisc: true
+  horizon: 333

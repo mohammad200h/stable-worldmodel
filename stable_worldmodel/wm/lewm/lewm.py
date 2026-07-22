@@ -11,6 +11,9 @@ class LeWM(nn.Module):
         action_encoder,
         projector=None,
         pred_proj=None,
+        reward_head=None,
+        continue_head=None,
+        delta_s_head=None,
         **kwargs,
     ):
         super().__init__()
@@ -20,6 +23,9 @@ class LeWM(nn.Module):
         self.action_encoder = action_encoder
         self.projector = projector or nn.Identity()
         self.pred_proj = pred_proj or nn.Identity()
+        self.reward_head = reward_head
+        self.continue_head = continue_head
+        self.delta_s_head = delta_s_head
 
     def encode(self, info):
         """Encode observations and actions into embeddings.
@@ -49,6 +55,36 @@ class LeWM(nn.Module):
         preds = self.pred_proj(rearrange(preds, 'b t d -> (b t) d'))
         preds = rearrange(preds, '(b t) d -> b t d', b=emb.size(0))
         return preds
+
+    def predict_reward(self, emb):
+        """DreamerV3 ``symexp_twohot`` reward dist from embeddings.
+
+        emb: (B, T, D) — typically predicted next-state embeddings.
+        Returns ``SymexpTwoHotDist`` or ``None`` if no reward head.
+        """
+        if self.reward_head is None:
+            return None
+        return self.reward_head(emb)
+
+    def predict_continue(self, emb):
+        """DreamerV3 binary continue dist from embeddings.
+
+        emb: (B, T, D) — typically predicted next-state embeddings.
+        Returns ``BinaryDist`` or ``None`` if no continue head.
+        """
+        if self.continue_head is None:
+            return None
+        return self.continue_head(emb)
+
+    def predict_delta_s(self, emb):
+        """Proprioception ``Δs`` Gaussian from embeddings.
+
+        emb: (B, T, D) — typically predicted next-state embeddings.
+        Returns ``DeltaSDist`` or ``None`` if no delta_s head.
+        """
+        if self.delta_s_head is None:
+            return None
+        return self.delta_s_head(emb)
 
     ####################
     ## Inference only ##
